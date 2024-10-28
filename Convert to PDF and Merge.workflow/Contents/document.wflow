@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>526</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>1.0.2</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run AppleScript.action</string>
+				<key>ActionName</key>
+				<string>Run AppleScript</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>source</key>
+					<string>-- Author: Gürol Canbek, https://github.com/gurol/utils
+-- Date: 29 October 2024
+-- Version: 1.0
+-- Description: This Automator workflow script converts various file types (documents, images, and HTML files) to PDF and merges them into a single PDF. It leverages LibreOffice for document conversion, wkhtmltopdf for HTML files, and ImageMagick for image files. Once all files are converted to PDFs, it merges them into one consolidated PDF using pdfunite.
+on run {input, parameters}
+    set outputFiles to {}
+    set temporaryPDFs to {}  -- Dönüştürülen geçici PDF'lerin listesi
+    set firstFileFolder to ""
+    set firstFolderName to ""
+    
+    -- LibreOffice'in desteklediği uzantılar listesi
+    set libreOfficeExtensions to {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "csv"}
+    
+    -- Görüntü dosyası uzantıları listesi
+    set imageExtensions to {"jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif"}
+    
+    repeat with aFile in input
+        try
+            set filePath to POSIX path of aFile
+            
+            -- İlk dosya için klasör bilgilerini al
+            if firstFileFolder is "" then
+                -- Dosya yolunu parçalara ayır ve klasör yolunu al
+                set pathParts to my splitString(filePath, "/")
+                set fileName to last item of pathParts
+                -- Son elemanı (dosya adını) listeden çıkar
+                set pathParts to items 1 thru -2 of pathParts
+                -- Klasör yolunu yeniden birleştir
+                set firstFileFolder to "/" &amp; my joinList(pathParts, "/") &amp; "/"
+                set firstFolderName to last item of pathParts
+            end if
+            
+            -- Dosya adını ve uzantısını al
+            set fileName to name of (info for aFile)
+            set fileType to (name extension of (info for aFile))
+            -- Eğer fileType boşsa, bir hata mesajı göster
+            if fileType is "" then
+                display dialog "Hata: Dosya uzantısı alınamadı: " &amp; fileName
+                return
+            end if
+            
+            -- Küçük harfe çevir uzantıyı (karşılaştırma için)
+            set fileType to my toLowerCase(fileType)
+            
+            -- PDF dosyası için tam yol oluştur
+            set pdfFileName to (text 1 through ((length of fileName) - (length of fileType) - 1)) of fileName &amp; ".pdf"
+            set pdfPath to firstFileFolder &amp; pdfFileName
+            
+            -- LibreOffice ile dönüştürülecek uzantıları kontrol et
+            if fileType is in libreOfficeExtensions then
+                -- LibreOffice ile PDF'e çevir
+                set libreOfficeCommand to "/Applications/LibreOffice.app/Contents/MacOS/soffice --headless --convert-to pdf --outdir " &amp; (quoted form of firstFileFolder) &amp; " " &amp; quoted form of filePath
+                do shell script libreOfficeCommand
+                set end of outputFiles to pdfPath
+                set end of temporaryPDFs to pdfPath  -- Geçici PDF listesine ekle
+            else if fileType is "html" or fileType is "htm" then
+                -- HTML/HTM dosyasını wkhtmltopdf ile PDF'e çevir
+                set htmlToPdfCommand to "/usr/local/bin/wkhtmltopdf " &amp; quoted form of filePath &amp; " " &amp; quoted form of pdfPath
+                do shell script htmlToPdfCommand
+                set end of outputFiles to pdfPath
+                set end of temporaryPDFs to pdfPath  -- Geçici PDF listesine ekle
+            else if fileType is in imageExtensions then
+                -- Görüntü dosyasını ImageMagick ile PDF'e çevir
+                set convertCommand to "/opt/homebrew/bin/convert " &amp; quoted form of filePath &amp; " -page A4 " &amp; quoted form of pdfPath
+                do shell script convertCommand
+                set end of outputFiles to pdfPath
+                set end of temporaryPDFs to pdfPath  -- Geçici PDF listesine ekle
+            else if fileType is "pdf" then
+                -- Eğer dosya zaten PDF ise doğrudan listeye ekle
+                set end of outputFiles to filePath
+            end if
+        on error errMsg
+            display dialog "Hata: " &amp; errMsg
+        end try
+    end repeat
+    -- PDF dosyalarını birleştir
+    try
+        set filesToJoin to ""
+        repeat with pdfFile in outputFiles
+            set filesToJoin to filesToJoin &amp; quoted form of pdfFile &amp; " "
+        end repeat
+        if (count of outputFiles) &gt; 1 then
+            set outputPDF to firstFileFolder &amp; firstFolderName &amp; ".pdf"
+            do shell script "/opt/homebrew/bin/pdfunite " &amp; filesToJoin &amp; quoted form of outputPDF
+            
+            -- Geçici PDF'leri sil
+            repeat with tempPDF in temporaryPDFs
+                try
+                    do shell script "rm " &amp; quoted form of tempPDF
+                on error errMsg
+                    display dialog "Geçici PDF silme hatası: " &amp; errMsg
+                end try
+            end repeat
+            
+            -- display dialog "Birleştirilmiş PDF oluşturuldu: " &amp; outputPDF
+        else
+            display dialog "Birleştirme işlemi için yeterli PDF dosyası yok."
+        end if
+    on error errMsg
+        display dialog "Birleştirme hatası: " &amp; errMsg
+    end try
+end run
+
+-- Yardımcı fonksiyon: String'i belirtilen ayırıcıya göre böler
+on splitString(theString, theDelimiter)
+    set oldDelimiters to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to theDelimiter
+    set theArray to every text item of theString
+    set AppleScript's text item delimiters to oldDelimiters
+    return theArray
+end splitString
+
+-- Yardımcı fonksiyon: Listeyi belirtilen ayırıcı ile birleştirir
+on joinList(theList, theDelimiter)
+    set oldDelimiters to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to theDelimiter
+    set theString to theList as string
+    set AppleScript's text item delimiters to oldDelimiters
+    return theString
+end joinList
+
+-- Yardımcı fonksiyon: Metni küçük harfe çevirir
+on toLowerCase(theText)
+    return do shell script "echo " &amp; quoted form of theText &amp; " | tr '[:upper:]' '[:lower:]'"
+end toLowerCase</string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.Automator.RunScript</string>
+				<key>CFBundleVersion</key>
+				<string>1.0.2</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunScriptAction</string>
+				<key>InputUUID</key>
+				<string>C8C2E86F-F06D-4FA0-8B58-5A1D7ABD1226</string>
+				<key>Keywords</key>
+				<array>
+					<string>Run</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>3D9E4BA6-80AC-4830-8CFD-4071258A9A5B</string>
+				<key>UUID</key>
+				<string>78F8768A-5A04-49BF-A69E-983FE28FA77E</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<string>on run {input, parameters}
+	
+	(* Your script goes here *)
+	
+	return input
+end run</string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+				</dict>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>309.000000:368.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>applicationBundleIDsByPath</key>
+		<dict>
+			<key>/System/Library/CoreServices/Finder.app</key>
+			<string>com.apple.finder</string>
+		</dict>
+		<key>applicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>applicationPaths</key>
+		<array>
+			<string>/System/Library/CoreServices/Finder.app</string>
+		</array>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
